@@ -2,7 +2,7 @@ from chains import generation_chain
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langgraph.graph import START, END, StateGraph
 from loguru import logger
-from typing import TypedDict, Annotated, Optional, List
+from typing import TypedDict, List
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from pydantic import BaseModel, Field
@@ -51,7 +51,7 @@ relfection_chain = reflection_prompt | llm.with_structured_output(schema=Reflect
 
 class TwitterState(TypedDict):
 
-    messages: List
+    messages: List[BaseMessage]
     score: float
 
 
