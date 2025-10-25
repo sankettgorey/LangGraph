@@ -13,6 +13,8 @@ tavily_tool = TavilySearchResults(max_results=5)
 
 # Function to execute search queries from AnswerQuestion tool calls
 def execute_tools(state: List[BaseMessage]) -> List[BaseMessage]:
+    print('in tool execution function')
+    print(state)
     last_ai_message: AIMessage = state[-1]
     
     # Extract tool calls from the AI message
