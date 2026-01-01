@@ -1,85 +1,78 @@
-from langchain_core.messages import AIMessage, HumanMessage, BaseMessage
-from langchain_ollama import ChatOllama
-from langchain_tavily import TavilySearch
-from langchain.tools import tool
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-
-from langgraph.graph import START, END, StateGraph
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.graph.message import add_messages
-
-from typing import TypedDict, Annotated, List
-
+from langchain_ollama import ChatOllama
+from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.tools import tool
 import operator
-from dotenv import load_dotenv
 
-load_dotenv('./langgraph_tutorial/.env')
+from langgraph.checkpoint.memory import InMemorySaver
+import sqlite3
 
-search = TavilySearch(search_results = 3)
+# -----------------------------
+# 1. Correct AgentState
+# -----------------------------
+class AgentState(TypedDict):
+    messages: Annotated[list, operator.add]
 
+# -----------------------------
+# 2. Proper Tool Definition
+# -----------------------------
 @tool
-def addition(a: int, b: int):
-    """takes two numbers and returns their addition"""
+def add_numbers(a: int, b: int) -> int:
+    """Add two numbers together."""
     return a + b
 
+@tool
+def multiply(a: int, b: int) -> int:
+    """multiplies two numbers together."""
+    return a * b
 
-def division(a: int, b: int):
-    """ takes two positive numbers and returns their division"""
-    if b > 0:
-        return a / b
-    return 'Please enter valid numbers'
+tools = [add_numbers, multiply]
 
-
-tools = [addition, division, search]
-
-
-llm = ChatOllama(model = 'qwen2.5:7b-instruct')
-
+# -----------------------------
+# 3. LLM with Native Tool Binding
+# -----------------------------
+llm = ChatOllama(model="qwen2.5:7b-instruct", temperature=0)
 llm_with_tools = llm.bind_tools(tools)
 
+# -----------------------------
+# 4. Nodes (Simplified)
+# -----------------------------
+def llm_node(state: AgentState):
+    return {"messages": [llm_with_tools.invoke(state["messages"])]}
 
-generation_prompt = ChatPromptTemplate(
-    [
-        (
-            'system',
-            'You are an expert in answering the questions asked by user.'
-            'Use the appropriate underlying tools when required and formulate a proper response for the asked questions one paragraph of 10-12 lines.'
-        ),
-        MessagesPlaceholder(variable_name='messages')
-    ]
+# Use prebuilt ToolNode - handles parsing automatically
+tool_node = ToolNode(tools)
+
+# -----------------------------
+# 5. Build Graph (Standard Pattern)
+# -----------------------------
+graph = StateGraph(AgentState)
+graph.add_node("llm", llm_node)
+graph.add_node("tools", tool_node)
+
+graph.set_entry_point("llm")
+graph.add_conditional_edges("llm", tools_condition)
+graph.add_edge("tools", "llm")
+
+checkpiont = InMemorySaver()
+
+app = graph.compile(checkpointer=checkpiont)
+
+# -----------------------------
+# 6. Run
+# -----------------------------
+
+
+while True:
+    usuer_input = input("Enter Question: ")
+    result = app.invoke({
+    "messages": [HumanMessage(content=usuer_input)],
+    },
+    config={"configurable": {"thread_id": '1'}}
+
 )
 
-generation_chain = generation_prompt | llm_with_tools
-
-
-
-class AgentState(TypedDict):
-    messages: Annotated[List[BaseMessage], add_messages]
-
-
-def generation_node(state: AgentState):
-    response = generation_chain.invoke(state)
-
-    return {'messages': [response]}
-
-
-tools_node = ToolNode(tools)
-
-
-graph = StateGraph(AgentState)
-graph.add_node('generation_node', generation_node)
-graph.add_node('tools', tools_node)
-
-graph.add_edge(START, 'generation_node')
-graph.add_conditional_edges('generation_node', tools_condition,)
-graph.add_edge('tools', 'generation_node')
-
-workflow = graph.compile()
-
-initial_state = {'messages': [HumanMessage(content = 'whats the latest news on tariffs on India')]}
-
-final_state = workflow.invoke(initial_state)
-
-print(final_state)
-print()
-print(final_state['messages'][-1].content)
+    print("FINAL ANSWER:", result["messages"][-1].content)
+    print()
